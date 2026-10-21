@@ -1,0 +1,448 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="app_name">Transdroid</string>
+
+    <!-- Torrents list -->
+    <string name="torrents_title">Torrents</string>
+    <string name="torrents_select_title">No torrent selected</string>
+    <string name="torrents_select_prompt">Select a torrent from the list to see its details</string>
+    <string name="torrents_no_server_title">No server configured</string>
+    <string name="torrents_no_server_message">Add your Transmission, rTorrent or qBittorrent server to start managing torrents.</string>
+    <string name="torrents_no_server_button">Add server</string>
+    <string name="torrents_no_torrents_title">No torrents yet</string>
+    <string name="torrents_no_torrents_message">Add one with the + button, or find something to download from Search or RSS.</string>
+    <string name="torrents_no_filter_title">No matches</string>
+    <string name="torrents_no_filter_message">No torrents match the “%1$s” filter right now.</string>
+    <string name="torrents_show_all">Show all torrents</string>
+    <string name="torrents_refresh">Refresh</string>
+    <string name="torrents_add">Add torrent</string>
+    <string name="torrents_settings">Settings</string>
+    <string name="torrents_retry">Retry</string>
+    <string name="torrents_alt_speed">Alternative speed limits</string>
+    <string name="torrents_alt_speed_on">Alternative speed limits on</string>
+    <string name="torrents_alt_speed_off">Alternative speed limits off</string>
+    <string name="filter_all">All</string>
+    <string name="filter_active">Active</string>
+    <string name="selection_count">%1$d selected</string>
+    <string name="selection_clear">Clear selection</string>
+    <string name="selection_select_all">Select all</string>
+    <string name="selection_remove_message">%1$d torrents will be removed from the server.</string>
+    <string name="filter_downloading">Downloading</string>
+    <string name="filter_seeding">Seeding</string>
+    <string name="filter_completed">Completed</string>
+    <string name="filter_paused">Paused</string>
+    <string name="filter_tracker_issues">Tracker issues</string>
+    <string name="reason_failed">Could not read tracker state, collapse and expand to retry</string>
+    <string name="update_available_badge">New version</string>
+    <string name="reason_loading">Reading tracker state…</string>
+    <string name="reason_all">All</string>
+    <string name="reason_no_data">Data missing</string>
+    <string name="reason_corrupt">Corrupt data</string>
+    <string name="reason_local_other">Other local error</string>
+    <string name="reason_tracker_other">Other announce failure</string>
+    <string name="about_check_update">Check for updates</string>
+    <string name="about_checking">Checking…</string>
+    <string name="about_up_to_date">You are on the latest version</string>
+    <string name="about_check_failed">Could not check for updates</string>
+    <string name="update_available_title">New version %1$s</string>
+    <string name="update_available_body">A newer build is available. It downloads here and Android installs it over the current version, keeping your settings.</string>
+    <string name="update_download_install">Download and install</string>
+    <string name="update_downloading">Downloading… %1$d%%</string>
+    <string name="update_failed">Download or install failed, please try again</string>
+    <string name="update_no_permission">Allow this app to install apps, then tap again</string>
+    <string name="filter_error">Error</string>
+
+    <!-- Navigation / filter drawer -->
+    <string name="drawer_open">Open menu</string>
+    <string name="drawer_filter_hint">Filter by name</string>
+    <string name="drawer_clear_filter">Clear filter</string>
+    <string name="drawer_status_header">Status</string>
+    <string name="drawer_labels_header">Labels</string>
+    <string name="drawer_no_label">No label</string>
+    <string name="drawer_trackers_header">Trackers</string>
+    <string name="drawer_connected_count">Connected · %1$d torrents</string>
+    <string name="drawer_connecting">Connecting…</string>
+    <string name="drawer_connection_error">Connection error</string>
+
+    <!-- Torrents bottom toolbar -->
+    <string name="toolbar_download_active">%d active</string>
+    <string name="toolbar_upload_sharing">%d sharing</string>
+
+    <!-- Torrent row -->
+    <string name="torrent_row_eta_left">%s left</string>
+    <string name="torrent_row_complete">%1$s · complete</string>
+    <string name="torrent_row_progress">%1$s of %2$s · %3$d%%</string>
+    <string name="torrent_row_peers">%d peers</string>
+
+    <!-- Torrent statuses -->
+    <string name="status_downloading">Downloading</string>
+    <string name="status_seeding">Seeding</string>
+    <string name="status_paused">Paused</string>
+    <string name="status_checking">Checking</string>
+    <string name="status_queued">Queued</string>
+    <string name="status_error">Error</string>
+    <string name="status_unknown">Unknown</string>
+    <string name="status_metadata">Fetching metadata</string>
+
+    <!-- Torrent details -->
+    <string name="details_back">Back</string>
+    <string name="details_start">Start</string>
+    <string name="details_pause">Pause</string>
+    <string name="details_remove">Remove</string>
+    <string name="details_remove_title">Remove torrent?</string>
+    <string name="details_remove_message">%1$s will be removed from the server.</string>
+    <string name="details_remove_also_data">Also delete downloaded data</string>
+    <string name="details_remove_confirm">Remove</string>
+    <string name="details_cancel">Cancel</string>
+    <string name="details_check_data">Verify data</string>
+    <string name="details_set_location">Set download location</string>
+    <string name="details_set_location_subtitle">for “%1$s”</string>
+    <string name="details_set_location_hint">Enter a directory path</string>
+    <string name="details_set_location_known">Known &amp; recent locations</string>
+    <string name="details_set_location_move_note">Existing files for this torrent will be moved to the new folder.</string>
+    <string name="details_set_location_rtorrent_warning">rTorrent can only repoint where it looks for this torrent\'s files - it won\'t move them. Make sure the files already exist at the new location, or the torrent will show as missing data.</string>
+    <string name="details_set_location_save">Set location</string>
+    <string name="details_set_label">Set label</string>
+    <string name="details_set_label_subtitle">for “%1$s”</string>
+    <string name="details_label_filter_hint">Filter or create a label</string>
+    <string name="details_label_create">Create “%1$s”</string>
+    <string name="details_tab_overview">Overview</string>
+    <string name="details_tab_files">Files (%d)</string>
+    <string name="details_tab_trackers">Trackers (%d)</string>
+    <string name="details_tab_peers">Peers (%d)</string>
+    <string name="details_section_download">Download</string>
+    <string name="details_section_upload">Upload</string>
+    <string name="details_size">Size</string>
+    <string name="details_downloaded">Downloaded</string>
+    <string name="details_uploaded">Uploaded</string>
+    <string name="details_ratio">Ratio</string>
+    <string name="details_seeders">Seeders</string>
+    <string name="details_leechers">Leechers</string>
+    <string name="details_eta">ETA</string>
+    <string name="details_added">Added</string>
+    <string name="details_location">Location</string>
+    <string name="details_files_empty">No file details available</string>
+    <string name="details_trackers_reannounce">Re-announce</string>
+    <string name="details_trackers_reannounce_hint">Announces to every tracker of this torrent at once.</string>
+    <string name="details_trackers_empty">No tracker details available</string>
+    <string name="details_peers_empty">No peers connected</string>
+    <string name="details_peer_progress">%1$d%%</string>
+    <string name="details_peer_encrypted">Encrypted connection</string>
+    <string name="details_tracker_working">Working</string>
+    <string name="details_tracker_idle">Idle</string>
+    <string name="details_tracker_error">Error</string>
+    <string name="details_tracker_stats">%1$d seeds · %2$d peers</string>
+    <string name="details_not_found">This torrent is no longer in the list</string>
+    <string name="priority_off">Skipped</string>
+    <string name="priority_low">Low priority</string>
+    <string name="priority_normal">Normal priority</string>
+    <string name="priority_high">High priority</string>
+
+    <!-- Sorting -->
+    <string name="sort_title">Sort</string>
+    <string name="sort_date_added">Date added</string>
+    <string name="sort_name">Name</string>
+    <string name="sort_download_speed">Download speed</string>
+    <string name="sort_upload_speed">Upload speed</string>
+    <string name="sort_size">Size</string>
+    <string name="sort_progress">Progress</string>
+    <string name="sort_ratio">Ratio</string>
+    <string name="sort_completed">Completion time</string>
+    <string name="sort_ascending">Ascending</string>
+    <string name="sort_descending">Descending</string>
+
+    <!-- Add torrent -->
+    <string name="add_title">Add torrent</string>
+    <string name="add_sheet_subtitle">for “%1$s”</string>
+    <string name="add_url_label">Magnet link or torrent URL</string>
+    <string name="add_url_hint">magnet:?xt=… or https://…/file.torrent</string>
+    <string name="add_paste">Paste</string>
+    <string name="add_or">or</string>
+    <string name="add_pick_file">Choose a .torrent file</string>
+    <string name="add_file_read_failed">Could not read that file</string>
+    <string name="add_location_label">Download location</string>
+    <string name="add_location_hint">Server default folder</string>
+    <string name="add_location_helper">Leave empty to use the server\'s default folder, or pick a recent location:</string>
+    <string name="add_paused">Add paused</string>
+    <string name="add_paused_summary">Choose which files to download first, then start it from the details screen</string>
+    <string name="add_button">Add to %1$s</string>
+    <string name="add_success">Torrent added</string>
+    <string name="add_invalid">Enter a magnet link or http(s) URL to a torrent file</string>
+
+    <!-- RSS -->
+    <string name="rss_title">RSS feeds</string>
+    <string name="rss_short_title">RSS</string>
+    <string name="rss_no_feeds_title">No RSS feeds yet</string>
+    <string name="rss_no_feeds_message">Add a feed to watch trackers for new torrents and grab them automatically.</string>
+    <string name="rss_add_feed">Add feed</string>
+    <string name="rss_delete_feed">Delete feed</string>
+    <string name="rss_feed_url">Feed URL</string>
+    <string name="rss_no_items">No items</string>
+    <string name="rss_new">New</string>
+    <string name="rss_all_feeds">All feeds</string>
+    <string name="rss_new_only">New only</string>
+    <string name="rss_summary">%1$d items · %2$d new · updated %3$s</string>
+    <string name="rss_added">Added</string>
+    <string name="rss_download">Download to server</string>
+    <string name="rss_manage_feeds">Manage feeds</string>
+
+    <!-- Search -->
+    <string name="search_title">Search</string>
+    <string name="search_hint">Search torrents</string>
+    <string name="search_provider">Indexer</string>
+    <string name="search_no_indexers_title">No search sites yet</string>
+    <string name="search_no_indexers_message">Add a Torznab indexer (from Jackett or Prowlarr) to search across your trackers.</string>
+    <string name="search_add_indexer">Add indexer</string>
+    <string name="search_no_results">No results</string>
+    <string name="search_seeders">%1$d seeders · %2$d leechers</string>
+    <string name="search_clear">Clear search</string>
+    <string name="search_all_indexers">All indexers</string>
+    <string name="search_sort_seeders">Seeders</string>
+    <string name="search_sort_leechers">Leechers</string>
+    <string name="search_sort_size">Size</string>
+    <string name="search_sort_newest">Newest</string>
+    <string name="search_result_count">%1$d results</string>
+    <string name="search_result_count_filtered">%1$d results · %2$s</string>
+    <string name="search_download">Download to server</string>
+
+    <!-- Server settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_servers">Servers</string>
+    <string name="settings_add_server">Add server</string>
+    <!-- Debug builds only: offline test server backed by DummyDaemonAdapter, never shown in a release build -->
+    <string name="settings_add_dummy_server">Add dummy test server</string>
+    <string name="settings_dummy_server_subtitle">Offline test data · no real server</string>
+    <string name="settings_active_server">Active</string>
+    <string name="settings_edit_server">Edit server</string>
+    <string name="settings_new_server">New server</string>
+    <string name="settings_server_section_title">Server</string>
+    <string name="settings_name">Name</string>
+    <string name="settings_type">Client type</string>
+    <string name="settings_host">Host name or IP address</string>
+    <string name="settings_port">Port</string>
+    <string name="settings_use_ssl">Use HTTPS (SSL)</string>
+    <string name="settings_path">Path</string>
+    <string name="settings_path_hint_transmission">Default: /transmission/rpc</string>
+    <string name="settings_path_hint_qbittorrent">Base path, usually empty</string>
+    <string name="settings_path_hint_rtorrent">Default: /RPC2</string>
+    <string name="settings_path_hint_deluge">Base path of the Web UI, usually empty</string>
+    <string name="settings_username">User name (optional)</string>
+    <string name="settings_password">Password</string>
+    <string name="settings_qbittorrent_api_key">API key (optional)</string>
+    <string name="settings_qbittorrent_api_key_summary">qBittorrent 5.2+ Web UI setting. When set, replaces user name/password login above.</string>
+    <string name="settings_show_password">Show password</string>
+    <string name="settings_hide_password">Hide password</string>
+    <string name="settings_save">Save</string>
+    <string name="settings_delete">Delete server</string>
+    <string name="settings_test">Test connection</string>
+    <string name="settings_testing">Testing connection…</string>
+    <string name="settings_test_success">Connected to %1$s</string>
+    <string name="settings_invalid_host">Enter a host name</string>
+    <string name="settings_invalid_port">Enter a valid port number (1–65535)</string>
+    <string name="settings_about">Transdroid %1$s — GNU GPL v3</string>
+    <string name="settings_preferences">Preferences</string>
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_notify_finished">Notify when torrents finish</string>
+    <string name="settings_notify_finished_summary">Checks the active server about every 15 minutes</string>
+    <string name="settings_search_providers">Search indexers</string>
+    <string name="settings_add_search_provider">Add Torznab indexer</string>
+    <string name="settings_edit_search_provider">Edit indexer</string>
+    <string name="settings_torznab_url">Torznab endpoint URL</string>
+    <string name="settings_torznab_url_hint">http://host:9117/api/v2.0/indexers/all/results/torznab</string>
+    <string name="settings_api_key">API key</string>
+    <string name="settings_basic_auth_summary">Only needed if the Torznab URL itself is behind a login (e.g. a seedbox member area), separate from the API key above.</string>
+    <string name="settings_delete_search_provider">Delete indexer</string>
+    <string name="settings_search_test_success">Connected — found %1$d result(s)</string>
+    <string name="settings_poll_interval">Refresh interval</string>
+    <string name="settings_poll_interval_value">%1$d seconds</string>
+    <string name="settings_peers">Peers</string>
+    <string name="settings_peer_sort">Sort peers by</string>
+    <string name="peer_sort_total_speed">Total speed</string>
+    <string name="peer_sort_download_speed">Download speed</string>
+    <string name="peer_sort_upload_speed">Upload speed</string>
+    <string name="peer_sort_address">IP address</string>
+    <string name="peer_sort_client">Torrent client</string>
+    <string name="settings_geoip">Country database</string>
+    <string name="settings_geoip_summary">Shows a country flag for peers on every client</string>
+    <string name="settings_geoip_summary_downloaded">Downloaded · tap to update</string>
+    <string name="settings_geoip_confirm_title">Download country database?</string>
+    <string name="settings_geoip_confirm_message">This downloads about 18 MB from ip66.dev, licensed under CC BY 4.0. Countries are then looked up on this device - peer addresses are never sent anywhere.</string>
+    <string name="settings_geoip_confirm_download">Download</string>
+    <string name="settings_geoip_downloading">Downloading country database…</string>
+    <string name="settings_geoip_download_done">Country database downloaded</string>
+    <string name="settings_geoip_download_failed">Could not download the country database</string>
+    <string name="settings_geoip_remove">Remove country database</string>
+    <string name="settings_geoip_removed">Country database removed</string>
+    <string name="settings_discovery_title">Found on your network</string>
+    <string name="settings_discovery_scanning">Scanning your local network…</string>
+    <string name="settings_trust_cert">Trust this server\'s certificate…</string>
+    <string name="settings_cert_fetching">Reading the server\'s certificate…</string>
+    <string name="settings_trust_cert_title">Trust this certificate?</string>
+    <string name="settings_trust_cert_message">Only trust it if this is your own server. Compare the fingerprint with the one shown by your server software:</string>
+    <string name="settings_trust_cert_confirm">Trust</string>
+    <string name="settings_cert_pinned">Certificate pinned (%1$s…)</string>
+    <string name="settings_cert_forget">Forget</string>
+    <string name="settings_custom_headers">Custom HTTP headers (optional)</string>
+    <string name="settings_custom_headers_hint">CF-Access-Client-Id: xxx.access\nCF-Access-Client-Secret: yyy</string>
+    <string name="settings_custom_headers_summary">One \"Name: Value\" per line; sent with every request. Use for reverse proxies, custom authentication, service tokens, etc.</string>
+    <string name="settings_port_hint">Client\'s own port on your LAN; 443 for an HTTPS domain via reverse proxy or tunnel</string>
+    <string name="settings_url_label">Web interface URL</string>
+    <string name="settings_url_placeholder">https://host:port/path</string>
+    <string name="settings_url_hint">Full %1$s Web UI address — Transdroid works out the rest.</string>
+    <string name="settings_detected_title">Detected settings</string>
+    <string name="settings_detected_ssl">Secure connection</string>
+    <string name="settings_yes">Yes</string>
+    <string name="settings_no">No</string>
+    <string name="settings_detected_host">Host</string>
+    <string name="settings_detected_folder">Folder</string>
+    <string name="settings_override_parts">Override individual parts</string>
+    <string name="settings_rtorrent_how">How to connect</string>
+    <string name="settings_rtorrent_mode_url">ruTorrent URL</string>
+    <string name="settings_rtorrent_mode_scgi">Manual (SCGI)</string>
+    <string name="settings_rturl_label">ruTorrent URL</string>
+    <string name="settings_rturl_hint">Point to your ruTorrent install — same idea as the other clients.</string>
+    <string name="settings_scgi_host">Hostname / IP</string>
+    <string name="settings_scgi_port">SCGI port</string>
+    <string name="settings_scgi_path">SCGI mount path (optional)</string>
+    <string name="settings_scgi_hint">Connects straight to rTorrent\'s SCGI socket, bypassing a web server.</string>
+    <string name="settings_connection_help">Connection help</string>
+    <string name="settings_xirvik_title">Xirvik seedbox</string>
+    <string name="settings_xirvik_summary">Detect your rTorrent connection settings automatically</string>
+    <string name="settings_xirvik_action">Set up automatically</string>
+    <string name="settings_xirvik_server">Xirvik hostname</string>
+    <string name="settings_xirvik_server_hint">Like eplus001.xirvik.com</string>
+    <string name="settings_xirvik_detect">Detect settings</string>
+    <string name="settings_xirvik_detecting">Detecting your seedbox…</string>
+    <string name="settings_xirvik_success">Mount point found — check the settings below</string>
+    <string name="settings_xirvik_failed">Could not detect the SCGI mount point automatically; using /RPC2 as a fallback. Check the host name and credentials, or edit the path manually below.</string>
+    <string name="settings_help_close">Got it</string>
+    <string name="settings_help_lan_title">Direct on your home network</string>
+    <string name="settings_help_lan">Use the server\'s IP address (like 192.168.1.5) with the client\'s own port — Transmission 9091, qBittorrent 8080, Deluge 8112 — and leave HTTPS off. Adding a new server also scans your network and offers what it finds.</string>
+    <string name="settings_help_domain_title">Via a domain or public IP</string>
+    <string name="settings_help_domain">Enter just the host name (torrent.example.com — no https:// prefix), turn HTTPS on, and use port 443, not the client\'s local port. Leave the path empty unless your proxy serves the client under a sub-path.</string>
+    <string name="settings_help_portal_title">Behind a login portal or reverse proxy</string>
+    <string name="settings_help_portal">If the test says the server answered with a web page, a login portal is in front of the client. Create a service token in the portal and put its headers in the Custom HTTP headers field, one Name: Value per line.</string>
+    <string name="settings_help_selfsigned_title">Self-signed HTTPS certificate</string>
+    <string name="settings_help_selfsigned">Turn HTTPS on and run Test connection; when the certificate isn\'t trusted, you\'ll be offered to inspect its fingerprint and pin it for this server.</string>
+
+    <!-- Local network override -->
+    <string name="settings_local_network_title">Local network</string>
+    <string name="settings_local_network_toggle">Use local settings on Wi-Fi</string>
+    <string name="settings_local_network_toggle_summary">When your phone is on a chosen network, connect using a different address and login.</string>
+    <string name="settings_local_ssid">Wi-Fi network (SSID)</string>
+    <string name="settings_local_ssid_hint">e.g. HomeNet-5G</string>
+    <string name="settings_local_use_current">Use current</string>
+    <string name="settings_local_ssid_summary">Overrides apply only while connected to this network.</string>
+    <string name="settings_local_override_address">Override address</string>
+    <string name="settings_local_url_label">Local web interface URL</string>
+    <string name="settings_local_url_placeholder">http://192.168.1.10:port/path</string>
+    <string name="settings_local_override_login">Override login (optional)</string>
+    <string name="settings_local_username">Username</string>
+    <string name="settings_local_password">Password</string>
+    <string name="settings_local_login_hint">Leave empty to reuse the login above</string>
+
+    <!-- Backup -->
+    <string name="settings_backup">Backup</string>
+    <string name="backup_export">Export settings</string>
+    <string name="backup_export_summary">Save servers, feeds and indexers to an encrypted file that survives reinstalling</string>
+    <string name="backup_import">Import settings</string>
+    <string name="backup_import_summary">Restore from a previously exported backup file</string>
+    <string name="backup_passphrase">Passphrase</string>
+    <string name="backup_export_message">The file is encrypted with this passphrase. You\'ll need it to import, so store it safely — it cannot be recovered.</string>
+    <string name="backup_export_confirm">Export</string>
+    <string name="backup_import_message">Enter the passphrase this backup was exported with. Importing replaces all current servers, feeds and indexers.</string>
+    <string name="backup_import_confirm">Import</string>
+    <string name="backup_export_done">Backup saved</string>
+    <string name="backup_export_failed">Could not write the backup file</string>
+    <string name="backup_wrong_passphrase">Wrong passphrase for this backup</string>
+    <string name="backup_invalid_file">That is not a readable Transdroid backup file</string>
+    <string name="backup_restored">Restored %1$d server(s)</string>
+
+    <!-- Help & Support -->
+    <string name="settings_help">Help &amp; Support</string>
+    <string name="pref_sendlog">Send error report</string>
+    <string name="pref_sendlog_info">Get support or report a bug</string>
+    <string name="pref_sendlog_include_log">Include recent error log</string>
+    <string name="pref_sendlog_send">Send</string>
+    <string name="pref_sendlog_no_app">No email app found</string>
+    <string name="pref_sendlog_body_prefix">Please describe your problem:\n\n\n</string>
+    <string name="pref_sendlog_body_log_header">Connection and error log:</string>
+    <string name="settings_donate">Donate</string>
+    <string name="settings_donate_subtitle">Support Transdroid development</string>
+    <string name="settings_no_browser_app">No app found to open this link</string>
+
+    <!-- About -->
+    <string name="settings_about_section">About</string>
+    <string name="settings_about_title">About</string>
+    <string name="about_title">About</string>
+    <string name="about_tagline">Manage your torrent server from anywhere — Transmission, rTorrent, qBittorrent and more.</string>
+    <string name="about_license">License</string>
+    <string name="about_license_subtitle">Free and open source software</string>
+    <string name="about_license_value" translatable="false">GPL-3.0</string>
+    <string name="about_whats_new">What\'s new</string>
+    <string name="about_whats_new_subtitle">Version history and changelog</string>
+    <string name="about_project_section">Project</string>
+    <string name="about_source">Source code</string>
+    <string name="about_source_subtitle">View the project on GitHub</string>
+    <string name="about_website">Website</string>
+    <string name="about_website_subtitle" translatable="false">transdroid.org</string>
+    <string name="about_contributors">Contributors</string>
+    <string name="about_contributors_subtitle">The people behind Transdroid</string>
+    <string name="about_report_issue">Report an issue</string>
+    <string name="about_report_issue_subtitle">Bugs and feature requests</string>
+    <string name="about_support_section">Support</string>
+    <string name="about_footer">© 2010–2026 Transdroid\nReleased under the GNU GPL-3.0 license</string>
+
+    <string name="about_gpl_url" translatable="false">https://www.gnu.org/licenses/gpl-3.0.html</string>
+    <string name="about_github_url" translatable="false">https://github.com/erickok/transdroid</string>
+    <string name="about_website_url" translatable="false">https://transdroid.org</string>
+    <string name="about_contributors_url" translatable="false">https://github.com/erickok/transdroid/graphs/contributors</string>
+    <string name="about_issues_url" translatable="false">https://github.com/erickok/transdroid/issues</string>
+
+    <!-- Changelog -->
+    <string name="changelog_title">What\'s new</string>
+    <string name="changelog_latest">Latest</string>
+    <string name="changelog_new">New</string>
+    <string name="changelog_improved">Improved</string>
+    <string name="changelog_fixed">Fixed</string>
+
+    <!-- Notifications -->
+    <string name="notification_channel_finished">Finished torrents</string>
+
+    <!-- Widget -->
+    <string name="widget_description">A list of running torrents, and counts and speeds of a server you pick</string>
+    <string name="widget_no_data">Open the app to load torrents</string>
+    <string name="widget_connected">Connected</string>
+    <string name="widget_no_active_torrents">No active torrents</string>
+    <string name="widget_no_torrents">No torrents</string>
+    <string name="widget_preview_server_name">Home server</string>
+    <string name="widget_seeding_label">Seed</string>
+    <string name="widget_footer_summary">%1$d active · %2$d total</string>
+    <string name="widget_refresh">Refresh</string>
+    <string name="widget_start">Start</string>
+    <string name="widget_pause">Pause</string>
+    <string name="widget_starting">Starting torrent…</string>
+    <string name="widget_pausing">Pausing torrent…</string>
+    <string name="widget_action_failed">Widget action failed: %1$s</string>
+    <string name="widget_configure_title">Widget settings</string>
+    <string name="widget_configure_server">Server to show</string>
+    <string name="widget_configure_sort">Sort torrents by</string>
+    <string name="widget_configure_direction">Direction</string>
+    <string name="widget_configure_filter">Filter</string>
+    <string name="widget_configure_show_inactive">Show inactive torrents</string>
+    <string name="widget_configure_show_inactive_summary">Also list paused, queued and errored torrents.</string>
+    <string name="widget_configure_done">Done</string>
+
+    <!-- Errors -->
+    <string name="error_connection">Cannot connect to %1$s</string>
+    <string name="error_authentication">The server rejected the user name or password</string>
+    <string name="error_unexpected">Unexpected reply from the server</string>
+    <string name="error_ssl">The server\'s HTTPS certificate is not trusted</string>
+
+    <plurals name="notification_finished_title">
+        <item quantity="one">Torrent finished</item>
+        <item quantity="other">%d torrents finished</item>
+    </plurals>
+
+</resources>

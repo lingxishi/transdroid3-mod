@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Feature gates for the lite (Google Play) flavor -->
+    <bool name="updatecheck_available">false</bool>
+    <bool name="search_available">false</bool>
+    <bool name="rss_available">false</bool>
+    <bool name="donate_available">false</bool>
+    <bool name="website_link_available">false</bool>
+</resources>

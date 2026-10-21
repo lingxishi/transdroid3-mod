@@ -1,0 +1,195 @@
+/*
+ * Copyright 2010-2026 Eric Kok et al.
+ *
+ * Transdroid is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Transdroid is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Transdroid. If not, see <https://www.gnu.org/licenses/>.
+ */
+package org.transdroid.protocol
+
+import java.util.concurrent.TimeUnit
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.transdroid.protocol.deluge.DelugeAdapter
+import org.transdroid.protocol.qbittorrent.QbittorrentAdapter
+import org.transdroid.protocol.rtorrent.RtorrentAdapter
+import org.transdroid.protocol.transmission.TransmissionAdapter
+
+/**
+ * A connection to one torrent daemon. Implementations are stateless beyond connection/session
+ * bookkeeping and safe to call from any dispatcher; all calls block on network I/O internally
+ * on the IO dispatcher. All methods throw [DaemonException] on failure.
+ */
+/**
+ * The wording a torrent's dead trackers agree on. Torrents usually have one tracker or several
+ * reporting the same thing, so this is normally just that message.
+ *
+ * A shared prefix must not be used to merge differing wordings: `502 (Bad Gateway)` and
+ * `503 (Service Unavailable)` share `Tracker HTTP response 50`, which names no error at all and
+ * showed up as junk classes. Among differing wordings the most common one wins, longest on a tie.
+ */
+internal fun sharedTrackerWording(messages: List<String>): String {
+    if (messages.size <= 1) return messages.firstOrNull().orEmpty()
+    val counts = messages.groupingBy { it }.eachCount()
+    val top = counts.values.max()
+    return counts.filterValues { it == top }.keys.maxByOrNull { it.length }.orEmpty()
+}
+
+interface DaemonAdapter {
+    val config: DaemonConfig
+
+    /** Verifies connectivity and credentials, returning a daemon version description. */
+    suspend fun testConnection(): String
+
+    suspend fun listTorrents(): List<Torrent>
+
+    /**
+     * Adds a torrent by magnet link or a URL to a .torrent file. With [startPaused] the
+     * torrent is added stopped, so files can be deselected before starting it. A blank or null
+     * [downloadLocation] leaves the server's own default directory in effect; otherwise every
+     * client is asked to place the torrent there directly at add time (see each adapter's
+     * implementation for how - rTorrent has no add-time parameter for this and instead passes an
+     * extra `d.directory.set` command alongside the load call).
+     */
+    suspend fun addByUrl(url: String, startPaused: Boolean = false, downloadLocation: String? = null)
+
+    /** Adds a torrent from the raw bytes of a .torrent file. See [addByUrl] for [downloadLocation]. */
+    suspend fun addByFile(
+        fileName: String,
+        contents: ByteArray,
+        startPaused: Boolean = false,
+        downloadLocation: String? = null,
+    )
+
+    suspend fun start(torrentId: String)
+
+    suspend fun pause(torrentId: String)
+
+    suspend fun remove(torrentId: String, deleteData: Boolean)
+
+    suspend fun listFiles(torrentId: String): List<TorrentFile>
+
+    /**
+     * Changes one file's download priority. Clients without a LOW level treat LOW as
+     * NORMAL; OFF always means "do not download".
+     */
+    suspend fun setFilePriority(torrentId: String, fileIndex: Int, priority: FilePriority)
+
+    suspend fun listTrackers(torrentId: String): List<Tracker>
+
+    /**
+     * Tracker announce failures for the given torrents, with the daemon's own message per tracker.
+     *
+     * Empty by default: only clients that can answer this for a whole list without one request per
+     * torrent override it, so callers treat the empty list as "not reported" rather than "none".
+     */
+    suspend fun trackerFailures(torrentIds: List<String>): List<TrackerFailure> = emptyList()
+
+    /**
+     * Whether [trackerFailures] can answer for the whole library in one go.
+     *
+     * Transmission can (a single `torrent-get` carries every `trackerStats`), so it is asked about
+     * every torrent and the result matches what the web UI reports. qBittorrent needs one request
+     * per torrent, so callers only hand it the torrents already flagged as broken.
+     */
+    open val canProbeAllTrackers: Boolean get() = true
+
+    /** Connected peers for this torrent, normalized across client types; empty when none are connected. */
+    suspend fun listPeers(torrentId: String): List<Peer>
+
+    /**
+     * Sets (replaces) the torrent's label; a blank string clears it. Every client supports some
+     * notion of a per-torrent label, but the exact model differs - qBittorrent and Deluge keep a
+     * server-side registry that a label must be created in before it can be assigned (handled
+     * internally here), while Transmission and rTorrent just accept an arbitrary string.
+     */
+    suspend fun setLabel(torrentId: String, label: String)
+
+    /**
+     * Forces a data recheck: re-hashes the torrent's downloaded pieces against the .torrent
+     * file's piece hashes to verify integrity. Every client supports this natively.
+     */
+    suspend fun checkData(torrentId: String)
+
+    /**
+     * Asks this torrent's trackers for an immediate announce, bypassing the regular interval.
+     * The call is per torrent, not per tracker: every client that supports it announces to all of
+     * the torrent's trackers at once. Clients without the feature keep this default, which surfaces
+     * as an ordinary action error instead of a silent no-op.
+     */
+    suspend fun reannounce(torrentId: String): Unit =
+        throw DaemonException.UnexpectedResponse("This server cannot re-announce trackers")
+
+    /**
+     * Moves the torrent's download directory to [location]. Transmission, qBittorrent and
+     * Deluge physically move the files on disk; rTorrent has no RPC call that does this and can
+     * only repoint where it looks for the data (see RtorrentAdapter's implementation) - existing
+     * files are not moved on disk for rTorrent servers, so [location] must already contain them.
+     */
+    suspend fun setDownloadLocation(torrentId: String, location: String)
+
+    /** Whether this client exposes an alternative ("turtle") speed limits toggle at all. */
+    val supportsAltSpeedLimits: Boolean get() = false
+
+    /** Whether alternative speed limits are currently active. Only meaningful when [supportsAltSpeedLimits]. */
+    suspend fun isAltSpeedLimitsEnabled(): Boolean = false
+
+    /** Enables or disables alternative ("turtle") speed limits. No-op where unsupported. */
+    suspend fun setAltSpeedLimitsEnabled(enabled: Boolean) {}
+}
+
+object DaemonAdapterFactory {
+
+    /** A default client with timeouts suited for home servers and seedboxes. */
+    fun defaultHttpClient(): OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
+
+    fun create(config: DaemonConfig, httpClient: OkHttpClient = defaultHttpClient()): DaemonAdapter {
+        var client = config.pinnedCertSha256
+            ?.takeIf { it.isNotBlank() }
+            ?.let { Tls.clientWithPinnedCertificate(httpClient, it) }
+            ?: httpClient
+        if (config.customHeaders.isNotEmpty()) {
+            client = client.newBuilder().addInterceptor { chain ->
+                chain.proceed(withCustomHeaders(chain.request(), config.customHeaders))
+            }.build()
+        }
+        return when (config.type) {
+            DaemonType.TRANSMISSION -> TransmissionAdapter(config, client)
+            DaemonType.QBITTORRENT -> QbittorrentAdapter(config, client)
+            DaemonType.RTORRENT -> RtorrentAdapter(config, client)
+            DaemonType.DELUGE -> DelugeAdapter(config, client)
+        }
+    }
+
+    /**
+     * Custom headers never clobber what the adapter itself set: its session cookie or
+     * Authorization must survive (a replaced Cookie loses the qBittorrent/Deluge session and
+     * every request fails as "unauthorized"), so a same-named Cookie is appended to the
+     * adapter's and any other header the adapter already sent is left alone.
+     */
+    internal fun withCustomHeaders(request: Request, custom: Map<String, String>): Request {
+        val builder = request.newBuilder()
+        custom.forEach { (name, value) ->
+            val existing = request.header(name)
+            when {
+                existing == null -> builder.header(name, value)
+                name.equals("Cookie", ignoreCase = true) -> builder.header(name, "$existing; $value")
+                else -> Unit
+            }
+        }
+        return builder.build()
+    }
+}

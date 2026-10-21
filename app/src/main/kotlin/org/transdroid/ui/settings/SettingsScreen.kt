@@ -1,0 +1,733 @@
+/*
+ * Copyright 2010-2026 Eric Kok et al.
+ *
+ * Transdroid is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Transdroid is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Transdroid. If not, see <https://www.gnu.org/licenses/>.
+ */
+package org.transdroid.ui.settings
+
+import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Email
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.RssFeed
+import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SettingsBackupRestore
+import androidx.compose.material.icons.rounded.SwapVert
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.booleanResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.transdroid.BuildConfig
+import org.transdroid.R
+import org.transdroid.debug.DebugTools
+import org.transdroid.data.PeerSort
+import org.transdroid.data.RssFeed
+import org.transdroid.data.SettingsRepository
+import org.transdroid.errorlog.ErrorLog
+import org.transdroid.ui.rss.EditFeedDialog
+import org.transdroid.ui.components.TransdroidTextField
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(
+    viewModel: SettingsViewModel,
+    onEditServer: (String?) -> Unit,
+    onEditSearchIndexer: (String?) -> Unit,
+    onOpenFeed: (String) -> Unit,
+    onOpenAbout: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val profiles by viewModel.profiles.collectAsStateWithLifecycle()
+    val activeId by viewModel.activeServerId.collectAsStateWithLifecycle()
+    val providers by viewModel.searchProviders.collectAsStateWithLifecycle()
+    val feeds by viewModel.feeds.collectAsStateWithLifecycle()
+    val notifyFinished by viewModel.notifyFinished.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val searchAvailable = booleanResource(R.bool.search_available)
+    val rssAvailable = booleanResource(R.bool.rss_available)
+
+    var showAddFeedDialog by remember { mutableStateOf(false) }
+    var deletingFeed by remember { mutableStateOf<RssFeed?>(null) }
+    var showSendReportDialog by remember { mutableStateOf(false) }
+
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    var showExportDialog by remember { mutableStateOf(false) }
+    var pendingBackup by remember { mutableStateOf<ByteArray?>(null) }
+    var importUri by remember { mutableStateOf<Uri?>(null) }
+    val exportWrittenMessage = stringResource(R.string.backup_export_done)
+    val exportFailedMessage = stringResource(R.string.backup_export_failed)
+    val restoreWrongPassphrase = stringResource(R.string.backup_wrong_passphrase)
+    val restoreInvalid = stringResource(R.string.backup_invalid_file)
+    val restoredTemplate = stringResource(R.string.backup_restored)
+    val noEmailAppMessage = stringResource(R.string.pref_sendlog_no_app)
+    var showGeoIpDialog by remember { mutableStateOf(false) }
+    val geoIpDownloadedMessage = stringResource(R.string.settings_geoip_download_done)
+    val geoIpFailedMessage = stringResource(R.string.settings_geoip_download_failed)
+    val geoIpRemovedMessage = stringResource(R.string.settings_geoip_removed)
+
+    val exportCreator = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri ->
+        val bytes = pendingBackup
+        pendingBackup = null
+        if (uri != null && bytes != null) {
+            scope.launch {
+                val ok = withContext(Dispatchers.IO) {
+                    try {
+                        context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } != null
+                    } catch (e: Exception) {
+                        ErrorLog.log("Settings", "Backup export failed", e)
+                        false
+                    }
+                }
+                snackbarHostState.showSnackbar(if (ok) exportWrittenMessage else exportFailedMessage)
+            }
+        }
+    }
+
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) importUri = uri
+    }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        // Enable regardless; without permission the worker simply cannot post, and the
+        // system settings remain the source of truth the user controls.
+        viewModel.setNotifyFinished(true)
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.settings_title)) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = stringResource(R.string.details_back),
+                        )
+                    }
+                },
+            )
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.padding(padding).fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        ) {
+            item {
+                SettingsSection(stringResource(R.string.settings_servers)) {
+                    val effectiveActiveId = activeId ?: profiles.firstOrNull()?.id
+                    profiles.forEach { profile ->
+                        val isDummy = DebugTools.isDummyServer(profile)
+                        val onClickRow: (() -> Unit)? = if (isDummy) null else ({ onEditServer(profile.id) })
+                        SettingsRow(
+                            icon = Icons.Rounded.Dns,
+                            title = profile.displayName,
+                            subtitle = if (isDummy) {
+                                stringResource(R.string.settings_dummy_server_subtitle)
+                            } else {
+                                "${profile.type.displayName()} · ${profile.host}:${profile.port}"
+                            },
+                            // Editing a dummy profile through the normal form would silently
+                            // strip the extras marker that makes it dummy in the first place.
+                            onClick = onClickRow,
+                            trailing = {
+                                if (profile.id == effectiveActiveId) {
+                                    SettingsChip(stringResource(R.string.settings_active_server))
+                                    Spacer(Modifier.width(4.dp))
+                                }
+                                if (isDummy) {
+                                    IconButton(onClick = { viewModel.delete(profile.id) }) {
+                                        Icon(
+                                            Icons.Rounded.Delete,
+                                            contentDescription = stringResource(R.string.rss_delete_feed),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                } else {
+                                    Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            },
+                        )
+                    }
+                    SettingsAddRow(
+                        title = stringResource(R.string.settings_add_server),
+                        onClick = { onEditServer(null) },
+                    )
+                    if (DebugTools.dummyServerAvailable) {
+                        SettingsAddRow(
+                            title = stringResource(R.string.settings_add_dummy_server),
+                            onClick = { viewModel.save(DebugTools.newDummyServerProfile()) },
+                        )
+                    }
+                }
+            }
+
+            if (rssAvailable) {
+                item {
+                    SettingsSection(stringResource(R.string.rss_title)) {
+                        feeds.forEach { feed ->
+                            SettingsRow(
+                                icon = Icons.Rounded.RssFeed,
+                                title = feed.displayName,
+                                subtitle = feed.url,
+                                onClick = { onOpenFeed(feed.id) },
+                                trailing = {
+                                    IconButton(onClick = { deletingFeed = feed }) {
+                                        Icon(
+                                            Icons.Rounded.Delete,
+                                            contentDescription = stringResource(R.string.rss_delete_feed),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                        SettingsAddRow(
+                            title = stringResource(R.string.rss_add_feed),
+                            onClick = { showAddFeedDialog = true },
+                        )
+                    }
+                }
+            }
+
+            if (searchAvailable) {
+                item {
+                    SettingsSection(stringResource(R.string.settings_search_providers)) {
+                        providers.forEach { provider ->
+                            SettingsRow(
+                                icon = Icons.Rounded.Search,
+                                title = provider.displayName,
+                                subtitle = provider.url,
+                                onClick = { onEditSearchIndexer(provider.id) },
+                            )
+                        }
+                        SettingsAddRow(
+                            title = stringResource(R.string.settings_add_search_provider),
+                            onClick = { onEditSearchIndexer(null) },
+                        )
+                    }
+                }
+            }
+
+            item {
+                SettingsSection(stringResource(R.string.settings_preferences)) {
+                    val pollInterval by viewModel.pollIntervalSeconds.collectAsStateWithLifecycle()
+                    var intervalMenuOpen by remember { mutableStateOf(false) }
+                    Box {
+                        SettingsRow(
+                            icon = Icons.Rounded.Refresh,
+                            title = stringResource(R.string.settings_poll_interval),
+                            subtitle = stringResource(R.string.settings_poll_interval_value, pollInterval),
+                            onClick = { intervalMenuOpen = true },
+                        )
+                        DropdownMenu(expanded = intervalMenuOpen, onDismissRequest = { intervalMenuOpen = false }) {
+                            SettingsRepository.POLL_INTERVAL_OPTIONS.forEach { seconds ->
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.settings_poll_interval_value, seconds)) },
+                                    leadingIcon = { RadioButton(selected = seconds == pollInterval, onClick = null) },
+                                    onClick = {
+                                        viewModel.setPollInterval(seconds)
+                                        intervalMenuOpen = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    SettingsRow(
+                        icon = Icons.Rounded.Notifications,
+                        title = stringResource(R.string.settings_notify_finished),
+                        subtitle = stringResource(R.string.settings_notify_finished_summary),
+                        onClick = null,
+                        trailing = {
+                            Switch(
+                                checked = notifyFinished,
+                                onCheckedChange = { enabled ->
+                                    if (enabled && Build.VERSION.SDK_INT >= 33) {
+                                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    } else {
+                                        viewModel.setNotifyFinished(enabled)
+                                    }
+                                },
+                            )
+                        },
+                    )
+                }
+            }
+
+            item {
+                SettingsSection(stringResource(R.string.settings_peers)) {
+                    val peerSort by viewModel.peerSort.collectAsStateWithLifecycle()
+                    var sortMenuOpen by remember { mutableStateOf(false) }
+                    Box {
+                        SettingsRow(
+                            icon = Icons.Rounded.SwapVert,
+                            title = stringResource(R.string.settings_peer_sort),
+                            subtitle = peerSort.label(),
+                            onClick = { sortMenuOpen = true },
+                        )
+                        DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }) {
+                            PeerSort.entries.forEach { sort ->
+                                DropdownMenuItem(
+                                    text = { Text(sort.label()) },
+                                    leadingIcon = { RadioButton(selected = sort == peerSort, onClick = null) },
+                                    onClick = {
+                                        viewModel.setPeerSort(sort)
+                                        sortMenuOpen = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    val geoIpDownloaded by viewModel.geoIpDownloaded.collectAsStateWithLifecycle()
+                    val geoIpDownloading by viewModel.geoIpDownloading.collectAsStateWithLifecycle()
+                    val onDownloadGeoIp: (() -> Unit)? = if (geoIpDownloading) null else ({ showGeoIpDialog = true })
+                    SettingsRow(
+                        icon = Icons.Rounded.Public,
+                        title = stringResource(R.string.settings_geoip),
+                        subtitle = stringResource(
+                            when {
+                                geoIpDownloading -> R.string.settings_geoip_downloading
+                                geoIpDownloaded -> R.string.settings_geoip_summary_downloaded
+                                else -> R.string.settings_geoip_summary
+                            }
+                        ),
+                        onClick = onDownloadGeoIp,
+                        trailing = {
+                            when {
+                                geoIpDownloading -> CircularProgressIndicator(
+                                    modifier = Modifier.padding(end = 12.dp).size(24.dp),
+                                    strokeWidth = 2.5.dp,
+                                )
+                                geoIpDownloaded -> IconButton(
+                                    onClick = {
+                                        viewModel.removeGeoIp { scope.launch { snackbarHostState.showSnackbar(geoIpRemovedMessage) } }
+                                    },
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Delete,
+                                        contentDescription = stringResource(R.string.settings_geoip_remove),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                else -> Icon(
+                                    Icons.Rounded.Download,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        },
+                    )
+                }
+            }
+
+            item {
+                SettingsSection(stringResource(R.string.settings_backup)) {
+                    SettingsRow(
+                        icon = Icons.Rounded.Save,
+                        title = stringResource(R.string.backup_export),
+                        subtitle = stringResource(R.string.backup_export_summary),
+                        onClick = { showExportDialog = true },
+                    )
+                    SettingsRow(
+                        icon = Icons.Rounded.SettingsBackupRestore,
+                        title = stringResource(R.string.backup_import),
+                        subtitle = stringResource(R.string.backup_import_summary),
+                        onClick = { importPicker.launch(arrayOf("application/octet-stream", "*/*")) },
+                    )
+                }
+            }
+
+            item {
+                SettingsSection(stringResource(R.string.settings_help)) {
+                    SettingsRow(
+                        icon = Icons.Rounded.Email,
+                        title = stringResource(R.string.pref_sendlog),
+                        subtitle = stringResource(R.string.pref_sendlog_info),
+                        onClick = { showSendReportDialog = true },
+                    )
+                }
+            }
+
+            item {
+                SettingsSection(stringResource(R.string.settings_about_section)) {
+                    SettingsRow(
+                        icon = Icons.Rounded.Info,
+                        title = stringResource(R.string.settings_about_title),
+                        subtitle = stringResource(R.string.settings_about, BuildConfig.VERSION_NAME),
+                        onClick = onOpenAbout,
+                    )
+                }
+            }
+        }
+    }
+
+    if (showExportDialog) {
+        PassphraseDialog(
+            title = stringResource(R.string.backup_export),
+            message = stringResource(R.string.backup_export_message),
+            confirmLabel = stringResource(R.string.backup_export_confirm),
+            onDismiss = { showExportDialog = false },
+            onConfirm = { passphrase ->
+                showExportDialog = false
+                viewModel.createBackup(passphrase) { bytes ->
+                    pendingBackup = bytes
+                    exportCreator.launch("transdroid-backup.tdbk")
+                }
+            },
+        )
+    }
+
+    importUri?.let { uri ->
+        PassphraseDialog(
+            title = stringResource(R.string.backup_import),
+            message = stringResource(R.string.backup_import_message),
+            confirmLabel = stringResource(R.string.backup_import_confirm),
+            onDismiss = { importUri = null },
+            onConfirm = { passphrase ->
+                importUri = null
+                scope.launch {
+                    val bytes = withContext(Dispatchers.IO) {
+                        try {
+                            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        } catch (e: Exception) {
+                            ErrorLog.log("Settings", "Backup import read failed", e)
+                            null
+                        }
+                    }
+                    if (bytes == null || bytes.size > MAX_BACKUP_BYTES) {
+                        snackbarHostState.showSnackbar(restoreInvalid)
+                        return@launch
+                    }
+                    viewModel.restoreBackup(bytes, passphrase) { result ->
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                when (result) {
+                                    is SettingsViewModel.RestoreResult.Success ->
+                                        String.format(restoredTemplate, result.serverCount)
+                                    SettingsViewModel.RestoreResult.WrongPassphrase -> restoreWrongPassphrase
+                                    SettingsViewModel.RestoreResult.InvalidFile -> restoreInvalid
+                                }
+                            )
+                        }
+                    }
+                }
+            },
+        )
+    }
+
+    if (showAddFeedDialog) {
+        EditFeedDialog(
+            onDismiss = { showAddFeedDialog = false },
+            onSave = { name, url ->
+                viewModel.saveFeed(RssFeed(id = viewModel.newFeedId(), name = name, url = url))
+                showAddFeedDialog = false
+            },
+        )
+    }
+
+    deletingFeed?.let { feed ->
+        AlertDialog(
+            onDismissRequest = { deletingFeed = null },
+            title = { Text(stringResource(R.string.rss_delete_feed)) },
+            text = { Text(feed.displayName) },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteFeed(feed.id)
+                    deletingFeed = null
+                }) { Text(stringResource(R.string.details_remove_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingFeed = null }) { Text(stringResource(R.string.details_cancel)) }
+            },
+        )
+    }
+
+    if (showGeoIpDialog) {
+        AlertDialog(
+            onDismissRequest = { showGeoIpDialog = false },
+            title = { Text(stringResource(R.string.settings_geoip_confirm_title)) },
+            text = { Text(stringResource(R.string.settings_geoip_confirm_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showGeoIpDialog = false
+                    viewModel.downloadGeoIp { success ->
+                        scope.launch {
+                            snackbarHostState.showSnackbar(if (success) geoIpDownloadedMessage else geoIpFailedMessage)
+                        }
+                    }
+                }) { Text(stringResource(R.string.settings_geoip_confirm_download)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGeoIpDialog = false }) { Text(stringResource(R.string.details_cancel)) }
+            },
+        )
+    }
+
+    if (showSendReportDialog) {
+        val activeProfile = profiles.firstOrNull { it.id == activeId }
+        SendReportDialog(
+            onDismiss = { showSendReportDialog = false },
+            onSend = { includeLog ->
+                showSendReportDialog = false
+                val intent = viewModel.buildErrorReportIntent(context, activeProfile, includeLog)
+                try {
+                    context.startActivity(intent)
+                } catch (e: ActivityNotFoundException) {
+                    scope.launch { snackbarHostState.showSnackbar(noEmailAppMessage) }
+                }
+            },
+        )
+    }
+}
+
+private const val MAX_BACKUP_BYTES = 10 * 1024 * 1024
+
+@Composable
+private fun PeerSort.label(): String = stringResource(
+    when (this) {
+        PeerSort.TOTAL_SPEED -> R.string.peer_sort_total_speed
+        PeerSort.DOWNLOAD_SPEED -> R.string.peer_sort_download_speed
+        PeerSort.UPLOAD_SPEED -> R.string.peer_sort_upload_speed
+        PeerSort.ADDRESS -> R.string.peer_sort_address
+        PeerSort.CLIENT -> R.string.peer_sort_client
+    }
+)
+
+@Composable
+private fun PassphraseDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var passphrase by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                Text(message)
+                Spacer(Modifier.height(12.dp))
+                TransdroidTextField(
+                    value = passphrase,
+                    onValueChange = { passphrase = it },
+                    label = { Text(stringResource(R.string.backup_passphrase)) },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(passphrase) }, enabled = passphrase.length >= 4) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.details_cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun SendReportDialog(onDismiss: () -> Unit, onSend: (includeLog: Boolean) -> Unit) {
+    var includeLog by remember { mutableStateOf(true) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.pref_sendlog)) },
+        text = {
+            Column {
+                Text(stringResource(R.string.pref_sendlog_info))
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(stringResource(R.string.pref_sendlog_include_log), modifier = Modifier.weight(1f))
+                    Switch(checked = includeLog, onCheckedChange = { includeLog = it })
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSend(includeLog) }) { Text(stringResource(R.string.pref_sendlog_send)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.details_cancel)) }
+        },
+    )
+}
+
+@Composable
+internal fun SettingsSection(title: String, content: @Composable () -> Unit) {
+    Column(Modifier.padding(top = 8.dp)) {
+        Text(
+            title,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 2.dp, vertical = 8.dp),
+        )
+        Card(
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(content = { content() })
+        }
+    }
+}
+
+@Composable
+internal fun SettingsRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: (() -> Unit)?,
+    trailing: @Composable RowScope.() -> Unit = {
+        Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    },
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .let { if (onClick != null) it.clickable(onClick = onClick) else it }
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(24.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        trailing()
+    }
+}
+
+@Composable
+private fun SettingsAddRow(title: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Box(
+            Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        }
+        Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+@Composable
+internal fun SettingsChip(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier
+            .clip(RoundedCornerShape(percent = 50))
+            .background(MaterialTheme.colorScheme.primaryContainer)
+            .padding(horizontal = 9.dp, vertical = 3.dp),
+    )
+}
+

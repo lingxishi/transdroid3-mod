@@ -1,0 +1,6 @@
+{
+  "versionCode": 3000117,
+  "versionName": "3.0-zh-20261021p",
+  "apkUrl": "https://github.com/lingxishi/transdroid3-mod/releases/download/v3.0-zh-20261021p/transdroid-3.0-mod-release-20261021p.apk",
+  "notes": "切换服务器时清空 Tracker 异常分类，不会再出现一个客户端的异常显示在另一个客户端下。\n分类不再取公共前缀，改取多数文案，修复「Tracker HTTP response 5」这类被截断的无意义分类。\n启动时静默检查更新，有新版本时抽屉里的「设置」显示「新版本」标签；不弹窗、不自动下载。\n统计口径：一个 tracker 正常即算正常，全部失败才计入。"
+}

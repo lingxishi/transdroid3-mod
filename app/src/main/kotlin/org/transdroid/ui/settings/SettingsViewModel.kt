@@ -1,0 +1,385 @@
+/*
+ * Copyright 2010-2026 Eric Kok et al.
+ *
+ * Transdroid is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Transdroid is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Transdroid. If not, see <https://www.gnu.org/licenses/>.
+ */
+package org.transdroid.ui.settings
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import java.util.UUID
+import javax.crypto.AEADBadTagException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.transdroid.AppContainer
+import org.transdroid.BuildConfig
+import org.transdroid.R
+import org.transdroid.appContainer
+import org.transdroid.data.BackupCrypto
+import org.transdroid.data.PeerSort
+import org.transdroid.data.ProfilesData
+import org.transdroid.data.RssFeed
+import org.transdroid.data.SearchProviderConfig
+import org.transdroid.data.ServerProfile
+import org.transdroid.errorlog.ErrorLog
+import org.transdroid.protocol.CertificateFingerprint
+import org.transdroid.protocol.Tls
+import org.transdroid.protocol.Xirvik
+import org.transdroid.protocol.discovery.DiscoveredDaemon
+import org.transdroid.protocol.search.TorznabProvider
+import org.transdroid.ui.torrents.UiError
+import org.transdroid.ui.torrents.toUiError
+
+sealed class TestState {
+    data object Idle : TestState()
+    data object Testing : TestState()
+    data class Success(val versionInfo: String) : TestState()
+    data class Failure(val error: UiError) : TestState()
+}
+
+sealed class SearchTestState {
+    data object Idle : SearchTestState()
+    data object Testing : SearchTestState()
+    data class Success(val resultCount: Int) : SearchTestState()
+    data class Failure(val error: UiError) : SearchTestState()
+}
+
+sealed class CertificateState {
+    data object Idle : CertificateState()
+    data object Fetching : CertificateState()
+    data class Fetched(val fingerprint: CertificateFingerprint) : CertificateState()
+    data class Failed(val error: UiError) : CertificateState()
+}
+
+data class DiscoveryState(
+    val scanning: Boolean = false,
+    val scanned: Boolean = false,
+    val found: List<DiscoveredDaemon> = emptyList(),
+)
+
+sealed class XirvikState {
+    data object Idle : XirvikState()
+    data object Detecting : XirvikState()
+    data class Success(val path: String) : XirvikState()
+    /** The mount path couldn't be found; the caller falls back to the adapter's own /RPC2 default. */
+    data object Failed : XirvikState()
+}
+
+class SettingsViewModel(private val container: AppContainer) : ViewModel() {
+
+    val profiles: StateFlow<List<ServerProfile>> = container.profilesRepository.profiles
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val activeServerId: StateFlow<String?> = container.settingsRepository.activeServerId
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    private val _testState = MutableStateFlow<TestState>(TestState.Idle)
+    val testState: StateFlow<TestState> = _testState.asStateFlow()
+
+    fun newProfileId(): String = UUID.randomUUID().toString()
+
+    fun save(profile: ServerProfile) {
+        viewModelScope.launch {
+            // Read from the repository, not the StateFlow, which may not have emitted yet
+            val firstServer = container.profilesRepository.profiles.first().isEmpty()
+            container.profilesRepository.save(profile)
+            if (firstServer) container.settingsRepository.setActiveServer(profile.id)
+        }
+    }
+
+    fun delete(profileId: String) {
+        viewModelScope.launch {
+            val wasActive = container.settingsRepository.activeServerId.first() == profileId
+            container.profilesRepository.delete(profileId)
+            if (wasActive) container.settingsRepository.setActiveServer(null)
+        }
+    }
+
+    fun testConnection(profile: ServerProfile) {
+        _testState.value = TestState.Testing
+        viewModelScope.launch {
+            _testState.value = try {
+                TestState.Success(container.adapterForTest(profile).testConnection())
+            } catch (e: Exception) {
+                TestState.Failure(e.toUiError(profile.host))
+            }
+        }
+    }
+
+    fun resetTestState() {
+        _testState.value = TestState.Idle
+        _certificateState.value = CertificateState.Idle
+        _xirvikState.value = XirvikState.Idle
+    }
+
+    private val _certificateState = MutableStateFlow<CertificateState>(CertificateState.Idle)
+    val certificateState: StateFlow<CertificateState> = _certificateState.asStateFlow()
+
+    /** Reads the server's certificate fingerprint so the user can decide to trust it. */
+    fun fetchCertificate(host: String, port: Int) {
+        _certificateState.value = CertificateState.Fetching
+        viewModelScope.launch {
+            _certificateState.value = try {
+                CertificateState.Fetched(Tls.fetchCertificate(host, port))
+            } catch (e: Exception) {
+                CertificateState.Failed(e.toUiError(host))
+            }
+        }
+    }
+
+    fun dismissCertificate() {
+        _certificateState.value = CertificateState.Idle
+    }
+
+    private val _xirvikState = MutableStateFlow<XirvikState>(XirvikState.Idle)
+    val xirvikState: StateFlow<XirvikState> = _xirvikState.asStateFlow()
+
+    /** Looks up a Xirvik seedbox's per-account SCGI mount path from its auto-config endpoint. */
+    fun detectXirvik(server: String, username: String, password: String) {
+        _xirvikState.value = XirvikState.Detecting
+        viewModelScope.launch {
+            val path = Xirvik.detectRpcPath(container.httpClient, server, username, password)
+            _xirvikState.value = if (path != null) XirvikState.Success(path) else XirvikState.Failed
+        }
+    }
+
+    private val _discovery = MutableStateFlow(DiscoveryState())
+    val discovery: StateFlow<DiscoveryState> = _discovery.asStateFlow()
+
+    /** Scans the local network once per settings session; no-op while already scanning. */
+    fun startLanScan() {
+        if (_discovery.value.scanning) return
+        _discovery.value = DiscoveryState(scanning = true)
+        viewModelScope.launch {
+            val found = try {
+                container.lanDiscovery.scan()
+            } catch (e: Exception) {
+                ErrorLog.log("Settings", "LAN discovery scan failed", e)
+                emptyList()
+            }
+            _discovery.value = DiscoveryState(scanning = false, scanned = true, found = found)
+        }
+    }
+
+    val searchProviders: StateFlow<List<SearchProviderConfig>> = container.profilesRepository.searchProviders
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun newSearchProviderId(): String = UUID.randomUUID().toString()
+
+    fun saveSearchProvider(provider: SearchProviderConfig) {
+        viewModelScope.launch { container.profilesRepository.saveSearchProvider(provider) }
+    }
+
+    fun deleteSearchProvider(providerId: String) {
+        viewModelScope.launch { container.profilesRepository.deleteSearchProvider(providerId) }
+    }
+
+    private val _searchTestState = MutableStateFlow<SearchTestState>(SearchTestState.Idle)
+    val searchTestState: StateFlow<SearchTestState> = _searchTestState.asStateFlow()
+
+    fun testSearchProvider(provider: SearchProviderConfig) {
+        _searchTestState.value = SearchTestState.Testing
+        viewModelScope.launch {
+            _searchTestState.value = try {
+                val results = TorznabProvider(
+                    endpointUrl = provider.url,
+                    apiKey = provider.apiKey,
+                    httpClient = container.httpClient,
+                    username = provider.username,
+                    password = provider.password,
+                ).search("test")
+                SearchTestState.Success(results.size)
+            } catch (e: Exception) {
+                SearchTestState.Failure(e.toUiError(provider.displayName))
+            }
+        }
+    }
+
+    fun resetSearchTestState() {
+        _searchTestState.value = SearchTestState.Idle
+    }
+
+    val feeds: StateFlow<List<RssFeed>> = container.profilesRepository.feeds
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun newFeedId(): String = UUID.randomUUID().toString()
+
+    fun saveFeed(feed: RssFeed) {
+        viewModelScope.launch { container.profilesRepository.saveFeed(feed) }
+    }
+
+    fun deleteFeed(feedId: String) {
+        viewModelScope.launch { container.profilesRepository.deleteFeed(feedId) }
+    }
+
+    val notifyFinished: StateFlow<Boolean> = container.settingsRepository.notifyFinished
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    val pollIntervalSeconds: StateFlow<Int> = container.settingsRepository.pollIntervalSeconds
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            org.transdroid.data.SettingsRepository.DEFAULT_POLL_INTERVAL_SECONDS,
+        )
+
+    fun setPollInterval(seconds: Int) {
+        viewModelScope.launch { container.settingsRepository.setPollIntervalSeconds(seconds) }
+    }
+
+    val peerSort: StateFlow<PeerSort> = container.settingsRepository.peerSort
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), PeerSort.DEFAULT)
+
+    fun setPeerSort(sort: PeerSort) {
+        viewModelScope.launch { container.settingsRepository.setPeerSort(sort) }
+    }
+
+    val geoIpDownloaded: StateFlow<Boolean> = container.geoIpDatabase.downloaded
+
+    private val _geoIpDownloading = MutableStateFlow(false)
+    val geoIpDownloading: StateFlow<Boolean> = _geoIpDownloading.asStateFlow()
+
+    /**
+     * Downloads (or re-downloads) the peer country database; no-op while one is already running.
+     * This ViewModel is activity-scoped, so the download carries on if the user leaves Settings.
+     */
+    fun downloadGeoIp(onResult: (success: Boolean) -> Unit) {
+        if (_geoIpDownloading.value) return
+        _geoIpDownloading.value = true
+        viewModelScope.launch {
+            val success = try {
+                container.geoIpDatabase.download()
+                true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ErrorLog.log("Settings", "Country database download failed", e)
+                false
+            } finally {
+                _geoIpDownloading.value = false
+            }
+            onResult(success)
+        }
+    }
+
+    fun removeGeoIp(onDone: () -> Unit) {
+        viewModelScope.launch {
+            container.geoIpDatabase.clear()
+            onDone()
+        }
+    }
+
+    /**
+     * Persists the toggle. The periodic background check itself is always scheduled (it also
+     * keeps a widget pointed at a non-active server fresh) - this only controls whether that
+     * check sends a finished-torrent notification, checked live on each run.
+     */
+    fun setNotifyFinished(enabled: Boolean) {
+        viewModelScope.launch { container.settingsRepository.setNotifyFinished(enabled) }
+    }
+
+    /** Serializes and encrypts the whole settings store with the given passphrase. */
+    fun createBackup(passphrase: String, onReady: (ByteArray) -> Unit) {
+        viewModelScope.launch {
+            val data = container.profilesRepository.currentData()
+            val bytes = withContext(Dispatchers.Default) {
+                BackupCrypto.encrypt(
+                    backupJson.encodeToString(ProfilesData.serializer(), data).encodeToByteArray(),
+                    passphrase.toCharArray(),
+                )
+            }
+            onReady(bytes)
+        }
+    }
+
+    fun restoreBackup(bytes: ByteArray, passphrase: String, onResult: (RestoreResult) -> Unit) {
+        viewModelScope.launch {
+            val result = try {
+                val plaintext = withContext(Dispatchers.Default) {
+                    BackupCrypto.decrypt(bytes, passphrase.toCharArray())
+                }
+                val data = backupJson.decodeFromString(ProfilesData.serializer(), plaintext.decodeToString())
+                container.profilesRepository.replaceData(data)
+                // The restored profiles carry their own ids; reset the selection if stale
+                val activeId = container.settingsRepository.activeServerId.first()
+                if (data.profiles.none { it.id == activeId }) {
+                    container.settingsRepository.setActiveServer(data.profiles.firstOrNull()?.id)
+                }
+                RestoreResult.Success(data.profiles.size)
+            } catch (e: AEADBadTagException) {
+                // A mistyped passphrase is routine user input, not an app fault - not logged.
+                RestoreResult.WrongPassphrase
+            } catch (e: Exception) {
+                ErrorLog.log("Settings", "Backup restore failed", e)
+                RestoreResult.InvalidFile
+            }
+            onResult(result)
+        }
+    }
+
+    /**
+     * Builds a "Send error report" email intent. [activeProfile] is passed in already resolved
+     * from Compose state (not re-read from [container]) so this can stay a plain, synchronous
+     * function. Only [ServerProfile.type]/[ServerProfile.host] are included - never username,
+     * password, or custom headers.
+     */
+    fun buildErrorReportIntent(context: android.content.Context, activeProfile: ServerProfile?, includeLog: Boolean): android.content.Intent {
+        val body = buildString {
+            append(context.getString(R.string.pref_sendlog_body_prefix))
+            append("Transdroid ${BuildConfig.VERSION_NAME}\n")
+            append("${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE}")
+            if (activeProfile != null) {
+                append("\nServer: ${activeProfile.type} @ ${activeProfile.host}")
+            }
+            if (includeLog) {
+                append("\n\n")
+                append(context.getString(R.string.pref_sendlog_body_log_header))
+                append("\n")
+                append(ErrorLog.entries().joinToString("\n"))
+            }
+        }
+        val target = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "message/rfc822"
+            putExtra(android.content.Intent.EXTRA_EMAIL, arrayOf("transdroid@2312.nl"))
+            putExtra(android.content.Intent.EXTRA_SUBJECT, "Transdroid error report")
+            putExtra(android.content.Intent.EXTRA_TEXT, body)
+        }
+        return android.content.Intent.createChooser(target, null)
+    }
+
+    sealed class RestoreResult {
+        data class Success(val serverCount: Int) : RestoreResult()
+        data object WrongPassphrase : RestoreResult()
+        data object InvalidFile : RestoreResult()
+    }
+
+    companion object {
+        private val backupJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+        val Factory: ViewModelProvider.Factory = viewModelFactory {
+            initializer { SettingsViewModel(checkNotNull(this[APPLICATION_KEY]).appContainer) }
+        }
+    }
+}

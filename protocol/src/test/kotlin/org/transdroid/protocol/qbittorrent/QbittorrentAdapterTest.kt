@@ -1,0 +1,540 @@
+/*
+ * Copyright 2010-2026 Eric Kok et al.
+ *
+ * Transdroid is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Transdroid is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Transdroid. If not, see <https://www.gnu.org/licenses/>.
+ */
+package org.transdroid.protocol.qbittorrent
+
+import kotlinx.coroutines.test.runTest
+import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Before
+import org.junit.Test
+import org.transdroid.protocol.DaemonConfig
+import org.transdroid.protocol.DaemonException
+import org.transdroid.protocol.DaemonType
+import org.transdroid.protocol.TorrentStatus
+import org.transdroid.protocol.TrackerStatus
+
+class QbittorrentAdapterTest {
+
+    private lateinit var server: MockWebServer
+
+    @Before
+    fun setUp() {
+        server = MockWebServer()
+        server.start()
+    }
+
+    @After
+    fun tearDown() {
+        server.shutdown()
+    }
+
+    private fun adapter(username: String? = "admin", password: String? = "adminadmin", apiKey: String? = null) = QbittorrentAdapter(
+        DaemonConfig(
+            type = DaemonType.QBITTORRENT,
+            host = server.hostName,
+            port = server.port,
+            username = username,
+            password = password,
+            apiKey = apiKey,
+        ),
+        OkHttpClient(),
+    )
+
+    private fun fixture(name: String): String =
+        checkNotNull(javaClass.getResourceAsStream("/qbittorrent/$name")) { "Missing fixture $name" }
+            .bufferedReader().readText()
+
+    private fun loginOk() = MockResponse()
+        .setBody("Ok.")
+        .setHeader("Set-Cookie", "SID=sessionIdHere; HttpOnly; path=/")
+
+    @Test
+    fun `logs in and passes session cookie to api calls`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody(fixture("torrents-info.json")))
+
+        adapter().listTorrents()
+
+        val login = server.takeRequest()
+        assertEquals("/api/v2/auth/login", login.path)
+        assertEquals("username=admin&password=adminadmin", login.body.readUtf8())
+        val info = server.takeRequest()
+        assertEquals("/api/v2/torrents/info", info.path)
+        assertEquals("SID=sessionIdHere", info.getHeader("Cookie"))
+    }
+
+    @Test
+    fun `401 without an api key is explained as a host header rejection`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setResponseCode(401))
+
+        try {
+            adapter().listTorrents()
+            fail("Expected DaemonException.Authentication")
+        } catch (expected: DaemonException.Authentication) {
+            assertTrue(expected.message!!.contains("Host header"))
+        }
+    }
+
+    @Test
+    fun `401 at login is explained as bad credentials or a host header rejection`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401).setBody("Unauthorized"))
+
+        try {
+            adapter().listTorrents()
+            fail("Expected DaemonException.Authentication")
+        } catch (expected: DaemonException.Authentication) {
+            assertTrue(expected.message!!.contains("username/password"))
+            assertTrue(expected.message!!.contains("Host header"))
+        }
+    }
+
+    @Test
+    fun `accepts the empty 204 login response of qbittorrent 5_2`() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(204)
+                .setHeader("Set-Cookie", "QBT_SID_8080=tokenValue; HttpOnly; path=/")
+        )
+        server.enqueue(MockResponse().setBody(fixture("torrents-info.json")))
+
+        adapter().listTorrents()
+
+        server.takeRequest() // login
+        assertEquals("QBT_SID_8080=tokenValue", server.takeRequest().getHeader("Cookie"))
+    }
+
+    @Test
+    fun `401 with a basic auth challenge is blamed on the proxy`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401).setHeader("WWW-Authenticate", "Basic realm=\"proxy\""))
+
+        try {
+            adapter(username = null, password = null).listTorrents()
+            fail("Expected DaemonException.Authentication")
+        } catch (expected: DaemonException.Authentication) {
+            assertTrue(expected.message!!.contains("proxy"))
+        }
+    }
+
+    @Test
+    fun `accepts the qbittorrent 5_2 per-port session cookie`() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setBody("Ok.")
+                .setHeader("Set-Cookie", "QBT_SID_8080=tokenValue; HttpOnly; path=/")
+        )
+        server.enqueue(MockResponse().setBody(fixture("torrents-info.json")))
+
+        adapter().listTorrents()
+
+        server.takeRequest() // login
+        assertEquals("QBT_SID_8080=tokenValue", server.takeRequest().getHeader("Cookie"))
+    }
+
+    @Test
+    fun `accepts a custom session cookie name`() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setBody("Ok.")
+                .setHeader("Set-Cookie", "MyCookie=tokenValue; HttpOnly; path=/")
+        )
+        server.enqueue(MockResponse().setBody(fixture("torrents-info.json")))
+
+        adapter().listTorrents()
+
+        server.takeRequest() // login
+        assertEquals("MyCookie=tokenValue", server.takeRequest().getHeader("Cookie"))
+    }
+
+    @Test
+    fun `rejected login maps to authentication error`() = runTest {
+        server.enqueue(MockResponse().setBody("Fails."))
+
+        try {
+            adapter().listTorrents()
+            fail("Expected DaemonException.Authentication")
+        } catch (expected: DaemonException.Authentication) {
+        }
+    }
+
+    @Test
+    fun `a banned login is not retried again within the cooldown window`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(403))
+
+        val adapter = adapter()
+        try {
+            adapter.listTorrents()
+            fail("Expected DaemonException.Authentication")
+        } catch (expected: DaemonException.Authentication) {
+            assertTrue(expected.message!!.contains("too many failed logins"))
+        }
+
+        // A second call immediately after must not hit the login endpoint again - a poll loop
+        // calling this every few seconds should back off rather than keep re-triggering the ban.
+        try {
+            adapter.listTorrents()
+            fail("Expected DaemonException.Authentication")
+        } catch (expected: DaemonException.Authentication) {
+            assertTrue(expected.message!!.contains("too many failed logins"))
+        }
+
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `list torrents parses and normalizes fixture`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody(fixture("torrents-info.json")))
+
+        val torrents = adapter().listTorrents()
+
+        assertEquals(4, torrents.size)
+        val downloading = torrents[0]
+        assertEquals("8c212779b4abde7c6bc608063a0d008b7e40ce32", downloading.id)
+        assertEquals(TorrentStatus.DOWNLOADING, downloading.status)
+        assertEquals(1220L, downloading.etaSeconds)
+        assertEquals("seeds and leeches sum to connected peers", 34, downloading.peersConnected)
+        assertEquals(22, downloading.seedersConnected)
+        assertEquals(12, downloading.leechersConnected)
+        assertEquals("category maps to a label", listOf("linux"), downloading.labels)
+        assertEquals("tracker field maps to its host", listOf("tracker.example.org"), downloading.trackers)
+
+        val seeding = torrents[1]
+        assertEquals(TorrentStatus.SEEDING, seeding.status)
+        assertNull("eta 8640000 must normalize to null", seeding.etaSeconds)
+        assertEquals("blank tracker field must normalize to empty", emptyList<String>(), seeding.trackers)
+
+        assertEquals("qBittorrent 5 stoppedDL state", TorrentStatus.PAUSED, torrents[2].status)
+        assertEquals(TorrentStatus.ERROR, torrents[3].status)
+    }
+
+    @Test
+    fun `anonymous config skips login`() = runTest {
+        server.enqueue(MockResponse().setBody(fixture("torrents-info.json")))
+
+        val torrents = adapter(username = null, password = null).listTorrents()
+
+        assertEquals(4, torrents.size)
+        assertEquals("/api/v2/torrents/info", server.takeRequest().path)
+    }
+
+    @Test
+    fun `an api key skips login and is sent as a bearer token`() = runTest {
+        server.enqueue(MockResponse().setBody(fixture("torrents-info.json")))
+
+        val torrents = adapter(apiKey = "qbt_fakeTestApiKeyNotARealSecret").listTorrents()
+
+        assertEquals(4, torrents.size)
+        val request = server.takeRequest()
+        assertEquals("/api/v2/torrents/info", request.path)
+        assertEquals("Bearer qbt_fakeTestApiKeyNotARealSecret", request.getHeader("Authorization"))
+        assertNull("no session cookie is sent alongside an api key", request.getHeader("Cookie"))
+    }
+
+    @Test
+    fun `an api key takes priority over username and password`() = runTest {
+        server.enqueue(MockResponse().setBody(fixture("torrents-info.json")))
+
+        adapter(username = "admin", password = "adminadmin", apiKey = "qbt_fakeTestApiKeyNotARealSecret").listTorrents()
+
+        // A login call would have been enqueued first if the api key didn't take priority.
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `a rejected api key maps to authentication error without retrying login`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(403))
+
+        try {
+            adapter(apiKey = "qbt_fakeTestApiKeyNotARealSecret").listTorrents()
+            fail("Expected DaemonException.Authentication")
+        } catch (expected: DaemonException.Authentication) {
+            assertTrue(expected.message!!.contains("API key"))
+        }
+
+        // No auth/login fallback attempt - qBittorrent's login endpoint refuses api-key requests.
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `list trackers filters pseudo-trackers and maps status`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody(fixture("trackers.json")))
+
+        val trackers = adapter().listTrackers("abcdef")
+
+        assertEquals("DHT pseudo-tracker excluded", 3, trackers.size)
+        val working = trackers[0]
+        assertEquals(TrackerStatus.WORKING, working.status)
+        assertEquals(6, working.seeders)
+        assertEquals(40, working.leechers)
+
+        val notWorking = trackers[1]
+        assertEquals(TrackerStatus.ERROR, notWorking.status)
+        assertEquals("Unregistered torrent", notWorking.message)
+
+        assertEquals("not-contacted status maps to idle", TrackerStatus.IDLE, trackers[2].status)
+    }
+
+    @Test
+    fun `list peers reads sync torrentPeers object and maps optional country`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody(fixture("peers.json")))
+
+        val peers = adapter().listPeers("abcdef").sortedBy { it.ip }
+
+        assertEquals(2, peers.size)
+        val withCountry = peers.first { it.ip == "203.0.113.5" }
+        assertEquals("qBittorrent/4.6.0", withCountry.clientName)
+        assertEquals(0.75f, withCountry.progress, 0.0001f)
+        assertEquals(125000L, withCountry.downloadRate)
+        assertEquals(51413, withCountry.port)
+        assertEquals("NL", withCountry.countryCode)
+        assertEquals("Netherlands", withCountry.countryName)
+        assertEquals("the E flag marks encrypted traffic", true, withCountry.encrypted)
+
+        val withoutCountry = peers.first { it.ip == "198.51.100.20" }
+        assertNull("country omitted when resolvePeerCountries is off", withoutCountry.countryCode)
+        assertNull(withoutCountry.countryName)
+        assertEquals("flags without an E read as not encrypted", false, withoutCountry.encrypted)
+
+        server.takeRequest() // login
+        assertTrue(server.takeRequest().path!!.startsWith("/api/v2/sync/torrentPeers?hash=abcdef"))
+    }
+
+    @Test
+    fun `list peers leaves encryption unknown when the server does not show flags`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(
+            MockResponse().setBody(
+                """{"full_update": true, "rid": 1, "show_flags": false,
+                    "peers": {"203.0.113.5:51413": {"ip": "203.0.113.5", "port": 51413, "progress": 0.5}}}"""
+            )
+        )
+
+        val peers = adapter().listPeers("abcdef")
+
+        assertEquals(1, peers.size)
+        assertNull("no flags reported at all is unknown, not unencrypted", peers[0].encrypted)
+    }
+
+    @Test
+    fun `pause falls back to legacy endpoint on 404`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setResponseCode(404))
+        server.enqueue(MockResponse().setBody(""))
+
+        adapter().pause("abcdef")
+
+        server.takeRequest() // login
+        assertEquals("/api/v2/torrents/stop", server.takeRequest().path)
+        val fallback = server.takeRequest()
+        assertEquals("/api/v2/torrents/pause", fallback.path)
+        assertEquals("hashes=abcdef", fallback.body.readUtf8())
+    }
+
+    @Test
+    fun `expired session re-authenticates once`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setResponseCode(403))
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody(fixture("torrents-info.json")))
+
+        val torrents = adapter().listTorrents()
+
+        assertEquals(4, torrents.size)
+        assertEquals(4, server.requestCount)
+    }
+
+    @Test
+    fun `add paused sends both pause field spellings`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody("Ok."))
+
+        adapter().addByUrl("magnet:?xt=urn:btih:abcdef", startPaused = true)
+
+        server.takeRequest() // login
+        val add = server.takeRequest().body.readUtf8()
+        assertTrue("4.x field", add.contains("paused=true"))
+        assertTrue("5.x field", add.contains("stopped=true"))
+    }
+
+    @Test
+    fun `add with a download location disables autoTMM and sends savepath`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody("Ok."))
+
+        adapter().addByUrl("magnet:?xt=urn:btih:abcdef", downloadLocation = "/downloads/movies")
+
+        server.takeRequest() // login
+        val add = server.takeRequest().body.readUtf8()
+        assertTrue(add.contains("autoTMM=false"))
+        assertTrue(add.contains("savepath=" + java.net.URLEncoder.encode("/downloads/movies", "UTF-8")))
+    }
+
+    @Test
+    fun `add without a download location omits savepath and autoTMM`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody("Ok."))
+
+        adapter().addByUrl("magnet:?xt=urn:btih:abcdef")
+
+        server.takeRequest() // login
+        val add = server.takeRequest().body.readUtf8()
+        assertTrue(!add.contains("savepath"))
+        assertTrue(!add.contains("autoTMM"))
+    }
+
+    @Test
+    fun `failed add is surfaced as an error`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody("Fails."))
+
+        try {
+            adapter().addByUrl("http://example.com/broken.torrent")
+            fail("Expected DaemonException.UnexpectedResponse")
+        } catch (expected: DaemonException.UnexpectedResponse) {
+        }
+    }
+
+    @Test
+    fun `remove sends hashes and deleteFiles`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody(""))
+
+        adapter().remove("abcdef", deleteData = true)
+
+        server.takeRequest() // login
+        val delete = server.takeRequest()
+        assertEquals("/api/v2/torrents/delete", delete.path)
+        assertEquals("hashes=abcdef&deleteFiles=true", delete.body.readUtf8())
+    }
+
+    @Test
+    fun `check data posts recheck with hashes`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody(""))
+
+        adapter().checkData("abcdef")
+
+        server.takeRequest() // login
+        val recheck = server.takeRequest()
+        assertEquals("/api/v2/torrents/recheck", recheck.path)
+        assertEquals("hashes=abcdef", recheck.body.readUtf8())
+    }
+
+    @Test
+    fun `set download location posts setLocation with hashes and location`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody(""))
+
+        adapter().setDownloadLocation("abcdef", "/downloads/new")
+
+        server.takeRequest() // login
+        val setLocation = server.takeRequest()
+        assertEquals("/api/v2/torrents/setLocation", setLocation.path)
+        assertEquals("hashes=abcdef&location=%2Fdownloads%2Fnew", setLocation.body.readUtf8())
+    }
+
+    @Test
+    fun `set label creates the category then assigns it`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody(""))
+        server.enqueue(MockResponse().setBody(""))
+
+        adapter().setLabel("abcdef", "Movies")
+
+        server.takeRequest() // login
+        val create = server.takeRequest()
+        assertEquals("/api/v2/torrents/createCategory", create.path)
+        assertEquals("category=Movies", create.body.readUtf8())
+        val set = server.takeRequest()
+        assertEquals("/api/v2/torrents/setCategory", set.path)
+        assertEquals("hashes=abcdef&category=Movies", set.body.readUtf8())
+    }
+
+    @Test
+    fun `set label survives createCategory failing because it already exists`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setResponseCode(409))
+        server.enqueue(MockResponse().setBody(""))
+
+        adapter().setLabel("abcdef", "Movies")
+
+        server.takeRequest() // login
+        server.takeRequest() // createCategory (409)
+        val set = server.takeRequest()
+        assertEquals("/api/v2/torrents/setCategory", set.path)
+    }
+
+    @Test
+    fun `set label with a blank string clears the category without creating one`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody(""))
+
+        adapter().setLabel("abcdef", "")
+
+        server.takeRequest() // login
+        val set = server.takeRequest()
+        assertEquals("/api/v2/torrents/setCategory", set.path)
+        assertEquals("hashes=abcdef&category=", set.body.readUtf8())
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun `reads alt speed limits mode`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody("1"))
+
+        val enabled = adapter().isAltSpeedLimitsEnabled()
+
+        assertTrue(enabled)
+        server.takeRequest() // login
+        assertEquals("/api/v2/transfer/speedLimitsMode", server.takeRequest().path)
+    }
+
+    @Test
+    fun `setting alt speed limits only toggles when the mode actually differs`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody("0"))
+        server.enqueue(MockResponse().setBody(""))
+
+        adapter().setAltSpeedLimitsEnabled(true)
+
+        server.takeRequest() // login
+        assertEquals("/api/v2/transfer/speedLimitsMode", server.takeRequest().path)
+        assertEquals("/api/v2/transfer/toggleSpeedLimitsMode", server.takeRequest().path)
+    }
+
+    @Test
+    fun `setting alt speed limits to the current mode does not toggle`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody("1"))
+
+        adapter().setAltSpeedLimitsEnabled(true)
+
+        server.takeRequest() // login
+        assertEquals("/api/v2/transfer/speedLimitsMode", server.takeRequest().path)
+        assertEquals(2, server.requestCount)
+    }
+}

@@ -1,0 +1,414 @@
+/*
+ * Copyright 2010-2026 Eric Kok et al.
+ *
+ * Transdroid is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Transdroid is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Transdroid. If not, see <https://www.gnu.org/licenses/>.
+ */
+package org.transdroid.protocol.rtorrent
+
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.test.runTest
+import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Before
+import org.junit.Test
+import org.transdroid.protocol.DaemonConfig
+import org.transdroid.protocol.DaemonException
+import org.transdroid.protocol.DaemonType
+import org.transdroid.protocol.FilePriority
+import org.transdroid.protocol.TorrentStatus
+import org.transdroid.protocol.TrackerStatus
+
+class RtorrentAdapterTest {
+
+    private lateinit var server: MockWebServer
+    private lateinit var adapter: RtorrentAdapter
+
+    @Before
+    fun setUp() {
+        server = MockWebServer()
+        server.start()
+        adapter = RtorrentAdapter(
+            DaemonConfig(
+                type = DaemonType.RTORRENT,
+                host = server.hostName,
+                port = server.port,
+                username = "user",
+                password = "secret",
+            ),
+            OkHttpClient(),
+        )
+    }
+
+    @After
+    fun tearDown() {
+        server.shutdown()
+    }
+
+    private fun fixture(name: String): String =
+        checkNotNull(javaClass.getResourceAsStream("/rtorrent/$name")) { "Missing fixture $name" }
+            .bufferedReader().readText()
+
+    private fun xmlResponse(inner: String) = MockResponse().setBody(
+        """<?xml version="1.0"?><methodResponse><params><param><value>$inner</value></param></params></methodResponse>"""
+    )
+
+    @Test
+    fun `test connection reads client version and uses default RPC2 path`() = runTest {
+        server.enqueue(xmlResponse("<string>0.9.8</string>"))
+
+        val version = adapter.testConnection()
+
+        assertEquals("rTorrent 0.9.8", version)
+        val request = server.takeRequest()
+        assertEquals("/RPC2", request.path)
+        assertTrue(request.getHeader("Authorization")!!.startsWith("Basic "))
+        assertTrue(request.body.readUtf8().contains("<methodName>system.client_version</methodName>"))
+    }
+
+    @Test
+    fun `list torrents parses and normalizes multicall fixture`() = runTest {
+        server.enqueue(MockResponse().setBody(fixture("d-multicall2.xml")))
+
+        val torrents = adapter.listTorrents()
+
+        assertEquals(4, torrents.size)
+        val downloading = torrents[0]
+        assertEquals("8C212779B4ABDE7C6BC608063A0D008B7E40CE32", downloading.id)
+        assertEquals(TorrentStatus.DOWNLOADING, downloading.status)
+        assertEquals(0.4266f, downloading.progress, 0.001f)
+        assertEquals("eta computed from remaining bytes and rate", 2804L, downloading.etaSeconds)
+        assertEquals("per-mille ratio normalized", 0.04f, downloading.ratio, 0.001f)
+        assertEquals(34, downloading.peersConnected)
+        assertEquals("d.peers_complete is the connected-seeder count", 6, downloading.seedersConnected)
+        assertEquals(28, downloading.leechersConnected)
+        assertEquals("urlencoded ruTorrent label decoded", listOf("Linux ISOs"), downloading.labels)
+
+        val seeding = torrents[1]
+        assertEquals(TorrentStatus.SEEDING, seeding.status)
+        assertEquals(2.0f, seeding.ratio, 0.001f)
+        assertNull(seeding.etaSeconds)
+
+        assertEquals(TorrentStatus.PAUSED, torrents[2].status)
+
+        // d.message is informational: status comes from the state machine, the message
+        // stays visible as the torrent's error text
+        val withMessage = torrents[3]
+        assertEquals(TorrentStatus.DOWNLOADING, withMessage.status)
+        assertTrue(withMessage.error!!.contains("Unregistered torrent"))
+    }
+
+    @Test
+    fun `add by file raises a too small xmlrpc size limit first`() = runTest {
+        server.enqueue(xmlResponse("<i8>524288</i8>"))
+        server.enqueue(xmlResponse("<i8>0</i8>"))
+        server.enqueue(xmlResponse("<i8>0</i8>"))
+
+        adapter.addByFile("big.torrent", ByteArray(600_000), startPaused = false, downloadLocation = null)
+
+        assertTrue(server.takeRequest().body.readUtf8().contains("<methodName>network.xmlrpc.size_limit</methodName>"))
+        val set = server.takeRequest().body.readUtf8()
+        assertTrue(set.contains("<methodName>network.xmlrpc.size_limit.set</methodName>"))
+        assertTrue(set.contains("2097152"))
+        assertTrue(server.takeRequest().body.readUtf8().contains("<methodName>load.raw_start</methodName>"))
+    }
+
+    @Test
+    fun `add by file never lowers a larger configured xmlrpc size limit`() = runTest {
+        server.enqueue(xmlResponse("<i8>16777216</i8>"))
+        server.enqueue(xmlResponse("<i8>0</i8>"))
+
+        adapter.addByFile("big.torrent", ByteArray(600_000), startPaused = false, downloadLocation = null)
+
+        assertEquals(2, server.requestCount)
+        server.takeRequest()
+        assertTrue(server.takeRequest().body.readUtf8().contains("<methodName>load.raw_start</methodName>"))
+    }
+
+    @Test
+    fun `a refused size limit does not block the upload`() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """<?xml version="1.0"?><methodResponse><fault><value><struct>""" +
+                    """<member><name>faultCode</name><value><i4>-506</i4></value></member>""" +
+                    """<member><name>faultString</name><value><string>Method not defined</string></value></member>""" +
+                    """</struct></value></fault></methodResponse>"""
+            )
+        )
+        server.enqueue(xmlResponse("<i8>0</i8>"))
+
+        adapter.addByFile("small.torrent", ByteArray(1_000), startPaused = true, downloadLocation = null)
+
+        server.takeRequest()
+        assertTrue(server.takeRequest().body.readUtf8().contains("<methodName>load.raw</methodName>"))
+    }
+
+    @Test
+    fun `list files maps chunks and priorities`() = runTest {
+        server.enqueue(MockResponse().setBody(fixture("f-multicall.xml")))
+
+        val files = adapter.listFiles("8C212779B4ABDE7C6BC608063A0D008B7E40CE32")
+
+        assertEquals(3, files.size)
+        assertEquals(FilePriority.HIGH, files[0].priority)
+        assertEquals(1f, files[0].progress, 0.001f)
+        assertEquals(FilePriority.NORMAL, files[1].priority)
+        assertEquals(0.25f, files[1].progress, 0.001f)
+        assertEquals(FilePriority.OFF, files[2].priority)
+    }
+
+    @Test
+    fun `list trackers maps enabled state and scrape counts`() = runTest {
+        server.enqueue(MockResponse().setBody(fixture("t-multicall.xml")))
+
+        val trackers = adapter.listTrackers("8C212779B4ABDE7C6BC608063A0D008B7E40CE32")
+
+        assertEquals(3, trackers.size)
+        val working = trackers[0]
+        assertEquals("https://tracker.example.org/announce", working.url)
+        assertEquals(TrackerStatus.WORKING, working.status)
+        assertEquals(6, working.seeders)
+        assertEquals(40, working.leechers)
+
+        val errored = trackers[1]
+        assertEquals(TrackerStatus.ERROR, errored.status)
+        assertNull("scrape count -1 must normalize to null", errored.seeders)
+
+        assertEquals("disabled tracker reads as idle", TrackerStatus.IDLE, trackers[2].status)
+    }
+
+    @Test
+    fun `list peers maps completed percent to a 0 to 1 progress`() = runTest {
+        server.enqueue(MockResponse().setBody(fixture("p-multicall.xml")))
+
+        val peers = adapter.listPeers("8C212779B4ABDE7C6BC608063A0D008B7E40CE32")
+
+        assertEquals(2, peers.size)
+        val first = peers[0]
+        assertEquals("203.0.113.5", first.ip)
+        assertEquals(51413, first.port)
+        assertEquals("qBittorrent 4.6.0", first.clientName)
+        assertEquals("p.completed_percent (0-100) must divide down to 0..1", 0.75f, first.progress, 0.001f)
+        assertEquals(125000L, first.downloadRate)
+        assertEquals(4000L, first.uploadRate)
+        assertNull("rTorrent's XML-RPC has no peer geolocation field", first.countryCode)
+        assertEquals(true, first.encrypted)
+
+        val second = peers[1]
+        assertNull("'Unknown' client_version must normalize to null", second.clientName)
+        assertEquals(1f, second.progress, 0.001f)
+        assertEquals(false, second.encrypted)
+    }
+
+    @Test
+    fun `add by url sends load-start with escaped url`() = runTest {
+        server.enqueue(xmlResponse("<i8>0</i8>"))
+
+        adapter.addByUrl("magnet:?xt=urn:btih:abc&dn=name")
+
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("<methodName>load.start</methodName>"))
+        assertTrue("ampersand must be XML-escaped", body.contains("magnet:?xt=urn:btih:abc&amp;dn=name"))
+    }
+
+    @Test
+    fun `add by url with a download location passes an extra d-directory-set command`() = runTest {
+        server.enqueue(xmlResponse("<i8>0</i8>"))
+
+        adapter.addByUrl("magnet:?xt=urn:btih:abc", downloadLocation = "/downloads/movies")
+
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("d.directory.set=/downloads/movies"))
+    }
+
+    @Test
+    fun `add by url without a download location sends no extra command`() = runTest {
+        server.enqueue(xmlResponse("<i8>0</i8>"))
+
+        adapter.addByUrl("magnet:?xt=urn:btih:abc")
+
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(!body.contains("d.directory.set"))
+    }
+
+    @Test
+    fun `remove with data sets the erase marker and deletes the tied file before erasing`() = runTest {
+        repeat(3) { server.enqueue(xmlResponse("<i8>0</i8>")) }
+
+        adapter.remove("ABCDEF", deleteData = true)
+
+        assertTrue(server.takeRequest().body.readUtf8().contains("<methodName>d.custom5.set</methodName>"))
+        assertTrue(server.takeRequest().body.readUtf8().contains("<methodName>d.delete_tied</methodName>"))
+        val erase = server.takeRequest().body.readUtf8()
+        assertTrue(erase.contains("<methodName>d.erase</methodName>"))
+        assertTrue(erase.contains("ABCDEF"))
+    }
+
+    @Test
+    fun `a failing delete_tied does not block the removal`() = runTest {
+        server.enqueue(xmlResponse("<i8>0</i8>"))
+        server.enqueue(
+            MockResponse().setBody(
+                """<?xml version="1.0"?><methodResponse><fault><value><struct>""" +
+                    """<member><name>faultCode</name><value><i4>-501</i4></value></member>""" +
+                    """<member><name>faultString</name><value><string>Could not delete tied file</string></value></member>""" +
+                    """</struct></value></fault></methodResponse>"""
+            )
+        )
+        server.enqueue(xmlResponse("<i8>0</i8>"))
+
+        adapter.remove("ABCDEF", deleteData = true)
+
+        assertEquals(3, server.requestCount)
+    }
+
+    @Test
+    fun `remove without data neither marks nor deletes the tied file`() = runTest {
+        server.enqueue(xmlResponse("<i8>0</i8>"))
+
+        adapter.remove("ABCDEF", deleteData = false)
+
+        assertEquals(1, server.requestCount)
+        assertTrue(server.takeRequest().body.readUtf8().contains("<methodName>d.erase</methodName>"))
+    }
+
+    @Test
+    fun `check data calls d-check_hash`() = runTest {
+        server.enqueue(xmlResponse("<i8>0</i8>"))
+
+        adapter.checkData("ABCDEF")
+
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("<methodName>d.check_hash</methodName>"))
+        assertTrue(body.contains("ABCDEF"))
+    }
+
+    @Test
+    fun `set file priority sets it, then makes rtorrent re-evaluate the torrent's priorities`() = runTest {
+        repeat(2) { server.enqueue(xmlResponse("<i8>0</i8>")) }
+
+        adapter.setFilePriority("ABCDEF", 2, FilePriority.OFF)
+
+        val set = server.takeRequest().body.readUtf8()
+        assertTrue(set.contains("<methodName>f.priority.set</methodName>"))
+        assertTrue(set.contains("ABCDEF:f2"))
+        assertTrue(set.contains("<i8>0</i8>"))
+        // Without it, already-queued pieces of a disabled file keep downloading (see #697)
+        val update = checkNotNull(server.takeRequest(1, TimeUnit.SECONDS)) { "No d.update_priorities call" }
+            .body.readUtf8()
+        assertTrue(update.contains("<methodName>d.update_priorities</methodName>"))
+        assertTrue(update.contains("ABCDEF"))
+    }
+
+    @Test
+    fun `set download location stops, closes, repoints, then reopens`() = runTest {
+        repeat(4) { server.enqueue(xmlResponse("<i8>0</i8>")) }
+
+        adapter.setDownloadLocation("ABCDEF", "/downloads/new")
+
+        val stop = server.takeRequest().body.readUtf8()
+        assertTrue(stop.contains("<methodName>d.stop</methodName>"))
+        val close = server.takeRequest().body.readUtf8()
+        assertTrue(close.contains("<methodName>d.close</methodName>"))
+        val setDir = server.takeRequest().body.readUtf8()
+        assertTrue(setDir.contains("<methodName>d.directory_base.set</methodName>"))
+        assertTrue(setDir.contains("/downloads/new"))
+        val open = server.takeRequest().body.readUtf8()
+        assertTrue(open.contains("<methodName>d.open</methodName>"))
+    }
+
+    @Test
+    fun `set label encodes the value like encodeURIComponent`() = runTest {
+        server.enqueue(xmlResponse("<i8>0</i8>"))
+
+        adapter.setLabel("ABCDEF", "Linux ISOs & Extras")
+
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("<methodName>d.custom1.set</methodName>"))
+        assertTrue("space encodes as %20, not +", body.contains("Linux%20ISOs%20%26%20Extras"))
+    }
+
+    @Test
+    fun `xml-rpc fault maps to unexpected response`() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """<?xml version="1.0"?><methodResponse><fault><value><struct>
+                   <member><name>faultCode</name><value><i4>-506</i4></value></member>
+                   <member><name>faultString</name><value><string>Method 'nope' not defined</string></value></member>
+                   </struct></value></fault></methodResponse>"""
+            )
+        )
+
+        try {
+            adapter.testConnection()
+            fail("Expected DaemonException.UnexpectedResponse")
+        } catch (expected: DaemonException.UnexpectedResponse) {
+            assertTrue(expected.message!!.contains("Method 'nope' not defined"))
+        }
+    }
+
+    @Test
+    fun `401 maps to authentication error`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+
+        try {
+            adapter.listTorrents()
+            fail("Expected DaemonException.Authentication")
+        } catch (expected: DaemonException.Authentication) {
+        }
+    }
+
+    @Test
+    fun `html login portal response is diagnosed instead of a generic parse error`() = runTest {
+        server.enqueue(
+            MockResponse().setBody("<!DOCTYPE html><html><head><title>Sign in</title></head><body>Please log in</body></html>")
+        )
+
+        try {
+            adapter.testConnection()
+            fail("Expected DaemonException.UnexpectedResponse")
+        } catch (expected: DaemonException.UnexpectedResponse) {
+            assertTrue(expected.message!!.contains("web page"))
+        }
+    }
+
+    @Test
+    fun `empty response is diagnosed as such`() = runTest {
+        server.enqueue(MockResponse().setBody(""))
+
+        try {
+            adapter.testConnection()
+            fail("Expected DaemonException.UnexpectedResponse")
+        } catch (expected: DaemonException.UnexpectedResponse) {
+            assertTrue(expected.message!!.contains("Empty response"))
+        }
+    }
+
+    @Test
+    fun `garbage response includes a snippet for diagnosis`() = runTest {
+        server.enqueue(MockResponse().setBody("Fatal error: out of memory in rtorrent.php on line 42"))
+
+        try {
+            adapter.testConnection()
+            fail("Expected DaemonException.UnexpectedResponse")
+        } catch (expected: DaemonException.UnexpectedResponse) {
+            assertTrue(expected.message!!.contains("Fatal error: out of memory"))
+        }
+    }
+}
